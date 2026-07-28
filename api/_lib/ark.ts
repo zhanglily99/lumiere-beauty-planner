@@ -1,7 +1,7 @@
 const DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
 const DEFAULT_MODEL = "glm-5-2-260617";
-const DEFAULT_TIMEOUT_MS = 55000;
-const DEFAULT_MAX_TOKENS = 900;
+const DEFAULT_TIMEOUT_MS = 58000;
+const DEFAULT_MAX_TOKENS = 1400;
 
 export type ChatTurn = {
   role: "system" | "user" | "assistant";

@@ -123,6 +123,68 @@ type ProductForm = Omit<Product, "id" | "usageCount" | "lastUsed">;
 type ItineraryForm = Omit<Itinerary, "id">;
 
 const STORAGE_KEY = "lumiere-beauty-planner-v1";
+const ASSISTANT_DOCK_STORAGE_KEY = "lumiere-assistant-dock-pos";
+
+type DockPosition = { x: number; y: number };
+
+type AssistantDockDragState = {
+  dragging: boolean;
+  moved: boolean;
+  pointerId: number;
+  startX: number;
+  startY: number;
+  originX: number;
+  originY: number;
+};
+
+function getAssistantFabSize() {
+  if (typeof window === "undefined") return 110;
+  return window.innerWidth <= 720 ? 100 : 110;
+}
+
+function getDefaultAssistantDockPosition(): DockPosition {
+  if (typeof window === "undefined") {
+    return { x: 0, y: 0 };
+  }
+
+  const fabSize = getAssistantFabSize();
+  const margin = window.innerWidth <= 720 ? 14 : 26;
+  const bottomOffset = window.innerWidth <= 720 ? 88 : 26;
+
+  return {
+    x: window.innerWidth - margin - fabSize,
+    y: window.innerHeight - bottomOffset - fabSize,
+  };
+}
+
+function clampAssistantDockPosition(pos: DockPosition): DockPosition {
+  if (typeof window === "undefined") return pos;
+
+  const fabSize = getAssistantFabSize();
+  const margin = 12;
+
+  return {
+    x: Math.min(Math.max(margin, pos.x), window.innerWidth - fabSize - margin),
+    y: Math.min(Math.max(margin, pos.y), window.innerHeight - fabSize - margin),
+  };
+}
+
+function readAssistantDockPosition(): DockPosition {
+  if (typeof window === "undefined") {
+    return { x: 0, y: 0 };
+  }
+
+  try {
+    const stored = localStorage.getItem(ASSISTANT_DOCK_STORAGE_KEY);
+    if (stored) {
+      return clampAssistantDockPosition(JSON.parse(stored) as DockPosition);
+    }
+  } catch {
+    // Fall back to the default corner position.
+  }
+
+  return getDefaultAssistantDockPosition();
+}
 const curatedProductImages: Record<string, string> = {
   "p-cleanser": "/products/cleanser-luxe.png",
   "p-hydra": "/products/serum-luxe.png",
@@ -464,6 +526,10 @@ export default function Home() {
     defaultItineraryForm(),
   );
   const [assistantOpen, setAssistantOpen] = useState(false);
+  const [assistantDockPos, setAssistantDockPos] = useState<DockPosition>(
+    readAssistantDockPosition,
+  );
+  const [assistantDockDragging, setAssistantDockDragging] = useState(false);
   const [assistantInput, setAssistantInput] = useState("");
   const [assistantListening, setAssistantListening] = useState(false);
   const [assistantTyping, setAssistantTyping] = useState(false);
@@ -477,6 +543,15 @@ export default function Home() {
   ]);
   const assistantMessagesRef = useRef<HTMLDivElement>(null);
   const assistantInputRef = useRef<HTMLInputElement>(null);
+  const assistantDockDragRef = useRef<AssistantDockDragState>({
+    dragging: false,
+    moved: false,
+    pointerId: -1,
+    startX: 0,
+    startY: 0,
+    originX: 0,
+    originY: 0,
+  });
 
   const today = todayISO();
   const progressKey = `${today}-${period}`;
@@ -547,6 +622,84 @@ export default function Home() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [assistantOpen]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setAssistantDockPos((current) => clampAssistantDockPosition(current));
+    };
+
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  const persistAssistantDockPosition = (position: DockPosition) => {
+    const clamped = clampAssistantDockPosition(position);
+    try {
+      localStorage.setItem(ASSISTANT_DOCK_STORAGE_KEY, JSON.stringify(clamped));
+    } catch {
+      // Ignore storage failures and keep the in-memory position.
+    }
+    return clamped;
+  };
+
+  const handleAssistantFabPointerDown = (
+    event: React.PointerEvent<HTMLButtonElement>,
+  ) => {
+    event.preventDefault();
+
+    const drag = assistantDockDragRef.current;
+    drag.dragging = true;
+    drag.moved = false;
+    drag.pointerId = event.pointerId;
+    drag.startX = event.clientX;
+    drag.startY = event.clientY;
+    drag.originX = assistantDockPos.x;
+    drag.originY = assistantDockPos.y;
+
+    const finishDrag = (pointerEvent: PointerEvent) => {
+      if (pointerEvent.pointerId !== drag.pointerId) return;
+
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", finishDrag);
+      window.removeEventListener("pointercancel", finishDrag);
+
+      drag.dragging = false;
+      setAssistantDockDragging(false);
+
+      if (drag.moved) {
+        setAssistantDockPos((current) => persistAssistantDockPosition(current));
+        return;
+      }
+
+      setAssistantOpen((current) => !current);
+    };
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      if (!drag.dragging || moveEvent.pointerId !== drag.pointerId) return;
+
+      const dx = moveEvent.clientX - drag.startX;
+      const dy = moveEvent.clientY - drag.startY;
+
+      if (!drag.moved && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) {
+        drag.moved = true;
+        setAssistantDockDragging(true);
+      }
+
+      if (drag.moved) {
+        moveEvent.preventDefault();
+        setAssistantDockPos(
+          clampAssistantDockPosition({
+            x: drag.originX + dx,
+            y: drag.originY + dy,
+          }),
+        );
+      }
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", finishDrag);
+    window.addEventListener("pointercancel", finishDrag);
+  };
 
   const recommendedProducts = useMemo(() => {
     if (!activeRoutine) return [];
@@ -902,6 +1055,17 @@ export default function Home() {
     setToast("行程已删除");
   };
 
+  const renderAssistantText = (text: string) =>
+    text
+      .split(/(\*\*[^*]+\*\*)/g)
+      .map((segment, index) =>
+        segment.startsWith("**") && segment.endsWith("**") && segment.length > 4 ? (
+          <strong key={index}>{segment.slice(2, -2)}</strong>
+        ) : (
+          segment
+        ),
+      );
+
   const speakAssistantReply = (text: string) => {
     if (!voiceReply || !("speechSynthesis" in window)) return;
     window.speechSynthesis.cancel();
@@ -951,7 +1115,7 @@ export default function Home() {
   ): Promise<string> => {
     try {
       const controller = new AbortController();
-      const timeout = window.setTimeout(() => controller.abort(), 45000);
+      const timeout = window.setTimeout(() => controller.abort(), 60000);
 
       const productContext = products.slice(0, 20).map((product) => ({
         name: product.name,
@@ -2352,7 +2516,40 @@ export default function Home() {
         </div>
       )}
 
-      <div className="assistant-dock">
+      <div
+        className="assistant-dock"
+        style={{
+          left: assistantDockPos.x,
+          top: assistantDockPos.y,
+        }}
+      >
+        <button
+          className={
+            assistantOpen
+              ? assistantDockDragging
+                ? "assistant-fab open dragging"
+                : "assistant-fab open"
+              : assistantDockDragging
+                ? "assistant-fab dragging"
+                : "assistant-fab"
+          }
+          onPointerDown={handleAssistantFabPointerDown}
+          aria-expanded={assistantOpen}
+          aria-grabbed={assistantDockDragging}
+          aria-label={assistantOpen ? "收起露露助手" : "打开露露助手"}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            draggable={false}
+            src={
+              assistantOpen
+                ? "/robot/lumiere-robot-default-greeting-v2-short-arm-transparent.gif"
+                : "/robot/lumiere-robot-default-greeting-transparent.webp"
+            }
+            alt="露露助手"
+          />
+        </button>
+
         {assistantOpen && (
           <section
             className="assistant-panel"
@@ -2400,7 +2597,9 @@ export default function Home() {
                   className={`assistant-message ${message.role}`}
                   key={message.id}
                 >
-                  {message.text}
+                  {message.role === "assistant"
+                    ? renderAssistantText(message.text)
+                    : message.text}
                 </div>
               ))}
               {assistantTyping && (
@@ -2460,20 +2659,6 @@ export default function Home() {
             </form>
           </section>
         )}
-
-        <button
-          className={assistantOpen ? "assistant-fab open" : "assistant-fab"}
-          onClick={() => setAssistantOpen((current) => !current)}
-          aria-expanded={assistantOpen}
-          aria-label={assistantOpen ? "收起露露助手" : "打开露露助手"}
-        >
-          <span className="bot-antenna" />
-          <span className="bot-face">
-            <i />
-            <i />
-            <b />
-          </span>
-        </button>
       </div>
 
       {toast && <div className="toast" role="status">{toast}</div>}

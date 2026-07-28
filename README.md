@@ -12,23 +12,45 @@
 - 使用文字或语音与美妆日程助手对话，助手基于 RAG（护肤知识库检索 + 用户个人数据 + 大模型）生成回复，接口异常时自动降级为规则问答
 - 使用浏览器本地存储保存个人数据
 
-## 本地运行（纯前端）
+## 本地运行（纯前端，助手为规则问答）
 
 Windows 上直接运行 `npm run dev`（`vinext dev`）依赖 Cloudflare Workers 本地运行时，在部分 Windows 环境下会崩溃。建议使用纯前端 Vite 开发服务器：
 
 ```bash
 npm install
-npx vite --config vite.pages.config.ts
+npm run dev:pages
 ```
 
-## 智能助手后端（RAG API）
+这种方式下没有启动后端接口，助手对话会自动降级为规则问答，不会调用大模型。
 
-助手对话通过 `api/assistant-chat.ts`（Vercel Serverless Function）调用大模型生成回复，本地测试需要先配置环境变量：
+## 本地运行（前端 + 智能助手后端，完整体验）
 
-```bash
-cp .env.example .env.local
-# 编辑 .env.local，填入 ARK_API_KEY
-```
+助手对话通过 `api/assistant-chat.ts`（Vercel Serverless Function）调用大模型生成回复。由于 `vercel dev` 在部分 Windows 环境下会被上级目录里无关的 `yarn.lock` 干扰而卡死，本地联调改用一个轻量脚本单独跑这个接口，配合 Vite 的开发代理即可：
+
+1. 配置环境变量：
+
+   ```bash
+   cp .env.example .env.local
+   # 编辑 .env.local，填入 ARK_API_KEY
+   ```
+
+2. 开两个终端分别启动：
+
+   ```bash
+   # 终端 1：前端开发服务器（默认 http://localhost:5173）
+   npm run dev:pages
+
+   # 终端 2：助手后端本地调试服务（默认 http://localhost:8787）
+   npm run dev:api
+   ```
+
+   `vite.pages.config.ts` 已配置好 `/api` 请求自动代理到 `http://localhost:8787`，浏览器里访问 `http://localhost:5173` 即可体验带真实大模型的助手对话。
+
+3. 如果只想验证后端逻辑本身（不经过浏览器），可以直接运行：
+
+   ```bash
+   npx tsx api/_lib/local-test.ts
+   ```
 
 环境变量说明：
 
@@ -38,13 +60,7 @@ cp .env.example .env.local
 | `ARK_BASE_URL` | API 地址，默认 `https://ark.cn-beijing.volces.com/api/v3` |
 | `ARK_MODEL` | 模型名称，默认 `glm-5-2-260617` |
 
-可以用以下脚本快速验证接口逻辑（无需启动完整开发服务器）：
-
-```bash
-npx tsx api/_lib/local-test.ts
-```
-
-该功能仅在部署到 Vercel（支持 Serverless Function）时可用；纯静态的 GitHub Pages 部署没有对应后端，助手会自动降级为本地规则问答。
+该后端仅在部署到 Vercel（支持 Serverless Function）时线上可用；纯静态的 GitHub Pages 部署没有对应后端，助手会自动降级为本地规则问答。
 
 ## 构建 GitHub Pages
 
