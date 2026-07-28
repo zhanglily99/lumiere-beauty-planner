@@ -913,7 +913,6 @@ export default function Home() {
 
   const buildAssistantReply = (message: string) => {
     if (/添加|新建|安排/.test(message) && /行程|日程/.test(message)) {
-      openAddItinerary(today);
       return "我已经为你打开今天的行程添加页。填好时间、类型和地点后保存即可。";
     }
 
@@ -946,24 +945,93 @@ export default function Home() {
     return "我可以帮你查看今天的行程、根据行程整理产品建议，或打开行程添加页。试试问我“今天有哪些行程？”";
   };
 
+  const resolveAssistantReply = async (
+    message: string,
+    historySnapshot: ChatMessage[],
+  ): Promise<string> => {
+    try {
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 45000);
+
+      const productContext = products.slice(0, 20).map((product) => ({
+        name: product.name,
+        brand: product.brand,
+        category: product.category,
+        status: product.status,
+        stock: product.stock,
+        tags: product.tags,
+        avoidTags: product.avoidTags,
+        daysToExpiry: daysToExpiry(product),
+      }));
+      const itineraryContext = todayItineraries.map((itinerary) => ({
+        title: itinerary.title,
+        kind: itinerary.kind,
+        startTime: itinerary.startTime,
+        endTime: itinerary.endTime,
+        location: itinerary.location,
+      }));
+
+      const response = await fetch("/api/assistant-chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message,
+          history: historySnapshot
+            .slice(-6)
+            .map((item) => ({ role: item.role, text: item.text })),
+          context: {
+            skinState,
+            pace,
+            period,
+            today,
+            itineraries: itineraryContext,
+            products: productContext,
+          },
+        }),
+        signal: controller.signal,
+      });
+      window.clearTimeout(timeout);
+
+      if (!response.ok) throw new Error(`assistant-chat responded ${response.status}`);
+      const data = (await response.json()) as { reply?: string };
+      if (!data.reply) throw new Error("assistant-chat returned an empty reply");
+      return data.reply;
+    } catch {
+      return buildAssistantReply(message);
+    }
+  };
+
   const sendAssistantMessage = (message = assistantInput) => {
     const cleanMessage = message.trim();
     if (!cleanMessage || assistantTyping) return;
-    const reply = buildAssistantReply(cleanMessage);
+
+    const historySnapshot = assistantMessages;
     setAssistantMessages((current) => [
       ...current,
       { id: makeId("message"), role: "user", text: cleanMessage },
     ]);
     setAssistantInput("");
+
+    if (/添加|新建|安排/.test(cleanMessage) && /行程|日程/.test(cleanMessage)) {
+      openAddItinerary(today);
+      const reply = "我已经为你打开今天的行程添加页。填好时间、类型和地点后保存即可。";
+      setAssistantMessages((current) => [
+        ...current,
+        { id: makeId("message"), role: "assistant", text: reply },
+      ]);
+      speakAssistantReply(reply);
+      return;
+    }
+
     setAssistantTyping(true);
-    window.setTimeout(() => {
+    resolveAssistantReply(cleanMessage, historySnapshot).then((reply) => {
       setAssistantMessages((current) => [
         ...current,
         { id: makeId("message"), role: "assistant", text: reply },
       ]);
       setAssistantTyping(false);
       speakAssistantReply(reply);
-    }, 650);
+    });
   };
 
   const startVoiceInput = () => {
@@ -2368,18 +2436,25 @@ export default function Home() {
                 ref={assistantInputRef}
                 value={assistantInput}
                 onChange={(event) => setAssistantInput(event.target.value)}
-                placeholder="问问今天的行程或产品…"
+                placeholder={assistantTyping ? "露露正在思考…" : "问问今天的行程或产品…"}
                 aria-label="向露露提问"
+                disabled={assistantTyping}
               />
               <button
                 type="button"
                 className={assistantListening ? "mic-button listening" : "mic-button"}
                 onClick={startVoiceInput}
                 aria-label="语音输入"
+                disabled={assistantTyping}
               >
                 {assistantListening ? "•••" : "⌁"}
               </button>
-              <button className="assistant-send" type="submit" aria-label="发送">
+              <button
+                className="assistant-send"
+                type="submit"
+                aria-label="发送"
+                disabled={assistantTyping || !assistantInput.trim()}
+              >
                 ↑
               </button>
             </form>

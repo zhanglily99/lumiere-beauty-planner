@@ -2,5 +2,10 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "npm run build:pages",
   "outputDirectory": "github-dist",
-  "framework": null
+  "framework": null,
+  "functions": {
+    "api/assistant-chat.ts": {
+      "maxDuration": 60
+    }
+  }
 }
